@@ -1,60 +1,34 @@
-import { OpenAIClient, AzureKeyCredential } from "@azure/openai";
+const axios = require('axios');
 
-// 環境変数の読み込み
-const endpoint = process.env["AZURE_OPENAI_ENDPOINT"];
-const apiKey = process.env["AZURE_OPENAI_KEY"];
-const deployment = process.env["AZURE_OPENAI_DEPLOYMENT"];
+module.exports = async function (context, req) {
+  const imageBuffer = req.body;
+  const subscriptionKey = process.env['VISION_KEY'];
+  const endpoint = process.env['VISION_ENDPOINT'];
 
-let client;
-
-try {
-  if (!endpoint || !apiKey || !deployment) {
-    throw new Error("環境変数が正しく設定されていません。");
-  }
-  client = new OpenAIClient(endpoint, new AzureKeyCredential(apiKey));
-} catch (setupError) {
-  console.error("初期化エラー:", setupError);
-}
-
-// Azure Functions のエクスポート
-export default async function (context, req) {
   try {
-    const userMessage = req.body?.message;
+    const response = await axios.post(
+      `${endpoint}/vision/v3.2/ocr?language=ja&detectOrientation=true`,
+      imageBuffer,
+      {
+        headers: {
+          'Ocp-Apim-Subscription-Key': subscriptionKey,
+          'Content-Type': req.headers['content-type']
+        }
+      }
+    );
 
-    if (!userMessage) {
-      context.res = {
-        status: 400,
-        body: { error: "message パラメータが必要です。" }
-      };
-      return;
-    }
-
-    const messages = [
-      { role: "system", content: "あなたは優秀なアシスタントです。" },
-      { role: "user", content: userMessage }
-    ];
-
-    const response = await client.getChatCompletions(deployment, messages, {
-      temperature: 0.7,
-    });
+    const lines = response.data.regions.flatMap(r => r.lines.map(line =>
+      line.words.map(w => w.text).join(' ')
+    ));
 
     context.res = {
       status: 200,
-      headers: { "Content-Type": "application/json" },
-      body: {
-        reply: response.choices[0].message.content
-      }
+      body: { text: lines.join('\n') }
     };
-  } catch (error) {
-    context.log.error("実行時エラー:", error);
-
+  } catch (err) {
     context.res = {
       status: 500,
-      headers: { "Content-Type": "application/json" },
-      body: {
-        error: "Internal Server Error",
-        message: error.message || "不明なエラーが発生しました"
-      }
+      body: { error: err.message }
     };
   }
-}
+};
